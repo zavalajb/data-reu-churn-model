@@ -1,0 +1,14 @@
+flask
+flask-restful
+flask-cors
+werkzeug==2.1.2
+gunicorn
+pyarrow
+langchain
+langchain-community
+streamlit
+boto3
+Pillow
+langchain_aws
+botocore
+python-dotenv
