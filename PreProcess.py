@@ -5,6 +5,7 @@ from pyspark.sql import DataFrame
 from pyspark.sql import functions as F
 from pyspark.sql.functions import col, udf, when
 from pyspark.ml.feature import StringIndexer
+import logging
 from pyspark.sql.types import IntegerType, FloatType, DoubleType, StringType, BooleanType, ArrayType, LongType, StructType, StructField
 # PySpark ML libraries
 
@@ -179,6 +180,8 @@ class PreProcess:
       return df_copy
     
   def churn(self, sdf, churn:str):
+      logger = logging.getLogger(__name__)
+      logging.basicConfig( encoding='utf-8', level=logging.INFO)
       """
       Identify the types of columns in a Spark DataFrame.
 
@@ -221,25 +224,28 @@ class PreProcess:
                 found_churn1 = True
                 # Column processing according to its data type
                 if key == "numeric_cols":
-                    print(f"Se encontró '{churn1}' en la lista de '{key}' , no requiere procesamiento adicional")
+                      indexer =StringIndexer(inputCol=churn1, outputCol="indexed_"+ churn1).fit(sdf)
+                      sdf = indexer.transform(sdf)
+                     # Store model StringIndexerModel in dict f or revert_string_index method
+                      self.indexer_models["indexed_"+ churn1] = indexer
+                     ## cambiar prints por login
+                      logger.info(f"Se encontró '{churn1}' en la lista de '{key}' , se aplicó string indexer")
                 elif key == "boolean_cols":  
                     integer_column = when(col(churn1) == False, 0).otherwise(1)
                     sdf = sdf.withColumn(churn1 + '_booleantointeger', integer_column) 
-                    sdf = sdf.drop(churn1)
-                    print(f"Se encontró '{churn1}' en la lista de '{key}' , se aplicó boolean to integer") 
+                    logger.info(f"Se encontró '{churn1}' en la lista de '{key}' , se aplicó boolean to integer") 
                 elif key == "categorical_cols":
                     stringIndexer = StringIndexer(inputCol= churn1, outputCol="indexed_"+ churn1)
                     sdf = stringIndexer.fit(sdf).transform(sdf)
-                    sdf = sdf.drop(churn1)
                     sdf.show()
-                    print(f"Se encontró '{churn1}' en la lista de '{key}', se aplicó string indexer")
+                    logger.info(f"Se encontró '{churn1}' en la lista de '{key}', se aplicó string indexer")
                 break  
           else:
             continue  
           break 
       
       if not found_churn1:
-       print(f"'{churn1}' no es una columna del dataframe")
+       logger.info(f"'{churn1}' no es una columna del dataframe")
    
       return sdf
 
