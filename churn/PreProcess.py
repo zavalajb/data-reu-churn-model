@@ -194,6 +194,33 @@ class PreProcess:
 
       return df_copy
   
+
+  def compute_class_weights_column(self, df: DataFrame, labels_column: str) -> DataFrame:
+      """
+      Calculate class weights for unbalanced datasets and put them in a new class_weights column
+
+      :param df: Spark DataFrame to process
+      :param labels_column: Name of the DataFrame column that holds the label values
+      :return: Spark DataFrame with an additional class_weights column that holds the class weights associated with each row
+      """
+      label_counts = df.groupby(labels_column).count().collect()
+      total_count = df.count()
+
+      n_labels = len(label_counts)
+
+      class_weights = {}
+
+      for row in label_counts:
+          class_weights[row[labels_column]] = total_count / (n_labels * row['count'])
+
+
+      def get_class_weight(label):
+          return float(class_weights[label])
+      
+      get_class_weight_udf = udf(get_class_weight, FloatType())
+
+      return df.withColumn("class_weights", get_class_weight_udf(col(labels_column)))
+  
   
   @classmethod
   def load_data(cls, file_path_df: str, spark):
