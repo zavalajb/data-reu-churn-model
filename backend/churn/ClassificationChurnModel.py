@@ -8,7 +8,7 @@ from pyspark.ml.evaluation import MulticlassClassificationEvaluator
 from pyspark.ml.tuning import CrossValidator, ParamGridBuilder
 
 
-class ClassificationChurnModel:
+class ClassificationModel:
 
   def __init__(self, df_param, features:list, objective:str):
 
