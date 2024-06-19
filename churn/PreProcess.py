@@ -51,7 +51,42 @@ class PreProcess:
       }
       
       return columns_types_dict
+  
 
+  def undersample_random(self, df: DataFrame, labels_column: str) -> DataFrame:
+    """
+    Performs random under-sampling of the majority class on imbalanced datasets. 
+    For multiclass classification problems, all classes but the minority class get undersampled. 
+    Each class get undersampled to approximately (but not precisely) the same proportion as the minority class.
+
+    :param df: Spark DataFrame to process.
+    :param labels_column: Name of the DataFrame column that holds the label values
+    :return: Spark Dataframe with the majority classes randomly undersampled.
+    """
+    label_counts = df.groupby(labels_column).count()
+
+    label_counts_min = label_counts.agg({"count":"min"}).collect()[0][0]
+
+    union_df = None
+
+    for row in label_counts.collect():
+        label = row[labels_column]
+        count = row['count']
+
+        if count > label_counts_min:
+            label_df = df.filter(col(labels_column) == label)
+            ratio = label_counts_min / count
+
+            processed_df = label_df.sample(withReplacement=False, fraction=ratio)
+        else:
+            processed_df = df.filter(col(labels_column) == label)
+
+        if not union_df:
+            union_df = processed_df
+        else:
+            union_df = union_df.union(processed_df)
+    
+    return union_df
 
 
   def string_index_columns(self, df: DataFrame, columns_to_string_index: list[tuple[str]]) -> DataFrame:
