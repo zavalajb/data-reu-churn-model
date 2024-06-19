@@ -24,10 +24,18 @@ class ClassificationModel:
     """
     return self.data.randomSplit([0.8, 0.2])
 
-  def build_classification_model(self, labelCol: str, featuresCol: str):
+  def build_classification_model(self, labelCol: str, featuresCol: str, weightCol : str):
+    """
+         Train the model with an specific param grid performing cross validation
+
+         labelCol: name of the label column in the data frame, 
+         featuresCol: name of the features col in the data frame, 
+         weightCol : name of the weight col
+         return: 
+    """
 
     # Initialize the classification Model
-    randomforest = RandomForestClassifier(labelCol=labelCol, featuresCol=featuresCol,seed = 42)
+    randomforest = RandomForestClassifier(labelCol=labelCol, featuresCol=featuresCol,weightCol= weightCol,seed = 42)
     # Set considered parameter grid
     # Create a ParamGridBuilder
     paramGrid = (ParamGridBuilder()
@@ -48,9 +56,9 @@ class ClassificationModel:
 
     return crossval
 
-  def train_classification_model(self, labelCol: str, featuresCol: str):
+  def train_classification_model(self, labelCol: str, featuresCol: str, weightCol : str):
     
-    crossval = self.build_classification_model(labelCol=labelCol, featuresCol=featuresCol)
+    crossval = self.build_classification_model(labelCol=labelCol, featuresCol=featuresCol, weightCol=weightCol)
     cvModel = crossval.fit(self.train)
     return  cvModel.bestModel
 

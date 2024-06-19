@@ -145,7 +145,7 @@ class PreProcess:
   def encoded_index_columns(self, df: DataFrame, columns_to_encode: list[tuple[str]]) -> DataFrame:
         
         """
-         Indexes the specified columns of a DataFrame.
+         Encode the specified columns of a DataFrame.
 
          :param df: Spark DataFrame to process.
          :param columns_to_encode: List of tuples with the names of the columns to be encoded and the names of the new encoded columns.
@@ -161,7 +161,7 @@ class PreProcess:
   def vector_feature_column(self, df: DataFrame, feature_cols: list[str]) -> DataFrame:
         
         """
-         Indexes the specified columns of a DataFrame.
+         Vectorize the specified columns of a DataFrame.
 
          :param df: Spark DataFrame to process.
          :param columns_to_create_feature_vector: List of names of the columns to be added to features vector.
