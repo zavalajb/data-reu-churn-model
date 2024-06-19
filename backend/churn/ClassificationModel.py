@@ -24,7 +24,7 @@ class ClassificationModel:
     """
     return self.data.randomSplit([0.8, 0.2])
 
-  def build_classification_model(self, labelCol: str, featuresCol: str, ratingCol: str):
+  def build_classification_model(self, labelCol: str, featuresCol: str):
 
     # Initialize the classification Model
     randomforest = RandomForestClassifier(labelCol=labelCol, featuresCol=featuresCol,seed = 42)
