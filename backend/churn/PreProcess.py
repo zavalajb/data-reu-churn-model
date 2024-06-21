@@ -2,14 +2,14 @@
 
 import logging
 # SQL libraries
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
 from pyspark.sql.functions import col, udf, when
 from pyspark.sql.types import IntegerType, FloatType, DoubleType, StringType, BooleanType, ArrayType, LongType, StructType, StructField
 # PySpark ML libraries
 
 
-from pyspark.ml.feature import StringIndexer, IndexToString, OneHotEncoder, VectorAssembler
+from pyspark.ml.feature import StringIndexer, IndexToString, OneHotEncoder, VectorAssembler, BucketedRandomProjectionLSH
 
 class PreProcess:
 
@@ -88,6 +88,53 @@ class PreProcess:
             union_df = union_df.union(processed_df)
     
     return union_df
+  
+
+  def undersample_nearmiss_v2(self, df: DataFrame, features_column: str, labels_column: str, k: int) -> DataFrame:
+    """
+    Performs under-sampling of the majority class on imbalanced datasets using the NEARMISS-2 algorithm. 
+    Currently, this implementation is only for binary classification problems. The majority class will be
+    under-sampled to have the same amount of data that the minority class
+
+    :param df: Spark DataFrame to process.
+    :param features_column: Name of the DataFrame column that holds the feature vectors
+    :param labels_column: Name of the DataFrame column that holds the label values
+    :param k: Number of neighbors to consider on the nearest neighbors-based heuristic
+    :return: Spark Dataframe with the majority class undersampled.
+    """
+    # Get data counts for each label and identify the minority class
+    label_counts = df.groupby(labels_column).count()
+
+    majority_count = label_counts.orderBy(F.desc(F.col('count'))).first()['count']
+
+    minority_label = label_counts.orderBy(col('count')).first()[labels_column]
+    minority_count = label_counts.orderBy(col('count')).first()['count']
+
+    # Assign unique ids to each minority and majority sample to facilitate calculations
+    df_minority = df.filter(col(labels_column) == minority_label).withColumn("id", F.monotonically_increasing_id())
+    df_majority = df.filter(col(labels_column) != minority_label).withColumn("id", F.monotonically_increasing_id())
+
+    # Fit a BucketRandomProjectionLSH model to calculate approximate euclidean distances
+    features_len = len(df.first()[features_column])
+    bucket_length = pow(majority_count, -1/features_len)
+
+    brp = BucketedRandomProjectionLSH(inputCol=features_column, outputCol="hashes", bucketLength=bucket_length, numHashTables=3)
+    model = brp.fit(df_majority)
+
+    df_distances = model.approxSimilarityJoin(df_majority, df_minority, float("inf"), distCol="distance")
+
+    # For each majority sample, only consider the k minority samples with the greatest distance
+    window_spec = Window.partitionBy("datasetA.id").orderBy(F.desc("distance"))
+    df_distances = df_distances.withColumn("distance_rank", F.row_number().over(window_spec))
+    df_distances = df_distances.filter(col("distance_rank") <= k)
+    # For each majority sample, compute the average distance to the k minority samples that were previously selected
+    df_distances = df_distances.groupBy("datasetA.id", "datasetA."+features_column, "datasetA."+labels_column).agg({"distance": "avg"})
+    df_distances = df_distances.withColumnRenamed("avg(distance)", "avg_distance")
+
+    # Select the majority samples with the smallest average distance
+    df_majority_undersampled = df_distances.orderBy("avg_distance").limit(minority_count).select(features_column, labels_column)
+
+    return df_minority.select(features_column, labels_column).union(df_majority_undersampled)
   
 
   def oversample_random(self, df: DataFrame, labels_column: str):
