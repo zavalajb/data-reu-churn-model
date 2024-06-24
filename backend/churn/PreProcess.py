@@ -1,14 +1,15 @@
 # Class for preproccessing the data
 
+import logging
 # SQL libraries
-from pyspark.sql import DataFrame
+from pyspark.sql import DataFrame, Window
 from pyspark.sql import functions as F
-from pyspark.sql.functions import col, udf
+from pyspark.sql.functions import col, udf, when
 from pyspark.sql.types import IntegerType, FloatType, DoubleType, StringType, BooleanType, ArrayType, LongType, StructType, StructField
 # PySpark ML libraries
 
 
-from pyspark.ml.feature import StringIndexer, IndexToString, OneHotEncoder, VectorAssembler
+from pyspark.ml.feature import StringIndexer, IndexToString, OneHotEncoder, VectorAssembler, BucketedRandomProjectionLSH
 
 class PreProcess:
 
@@ -87,6 +88,53 @@ class PreProcess:
             union_df = union_df.union(processed_df)
     
     return union_df
+  
+
+  def undersample_nearmiss_v2(self, df: DataFrame, features_column: str, labels_column: str, k: int) -> DataFrame:
+    """
+    Performs under-sampling of the majority class on imbalanced datasets using the NEARMISS-2 algorithm. 
+    Currently, this implementation is only for binary classification problems. The majority class will be
+    under-sampled to have the same amount of data that the minority class
+
+    :param df: Spark DataFrame to process.
+    :param features_column: Name of the DataFrame column that holds the feature vectors
+    :param labels_column: Name of the DataFrame column that holds the label values
+    :param k: Number of neighbors to consider on the nearest neighbors-based heuristic
+    :return: Spark Dataframe with the majority class undersampled.
+    """
+    # Get data counts for each label and identify the minority class
+    label_counts = df.groupby(labels_column).count()
+
+    majority_count = label_counts.orderBy(F.desc(F.col('count'))).first()['count']
+
+    minority_label = label_counts.orderBy(col('count')).first()[labels_column]
+    minority_count = label_counts.orderBy(col('count')).first()['count']
+
+    # Assign unique ids to each minority and majority sample to facilitate calculations
+    df_minority = df.filter(col(labels_column) == minority_label).withColumn("id", F.monotonically_increasing_id())
+    df_majority = df.filter(col(labels_column) != minority_label).withColumn("id", F.monotonically_increasing_id())
+
+    # Fit a BucketRandomProjectionLSH model to calculate approximate euclidean distances
+    features_len = len(df.first()[features_column])
+    bucket_length = pow(majority_count, -1/features_len)
+
+    brp = BucketedRandomProjectionLSH(inputCol=features_column, outputCol="hashes", bucketLength=bucket_length, numHashTables=3)
+    model = brp.fit(df_majority)
+
+    df_distances = model.approxSimilarityJoin(df_majority, df_minority, float("inf"), distCol="distance")
+
+    # For each majority sample, only consider the k minority samples with the greatest distance
+    window_spec = Window.partitionBy("datasetA.id").orderBy(F.desc("distance"))
+    df_distances = df_distances.withColumn("distance_rank", F.row_number().over(window_spec))
+    df_distances = df_distances.filter(col("distance_rank") <= k)
+    # For each majority sample, compute the average distance to the k minority samples that were previously selected
+    df_distances = df_distances.groupBy("datasetA.id", "datasetA."+features_column, "datasetA."+labels_column).agg({"distance": "avg"})
+    df_distances = df_distances.withColumnRenamed("avg(distance)", "avg_distance")
+
+    # Select the majority samples with the smallest average distance
+    df_majority_undersampled = df_distances.orderBy("avg_distance").limit(minority_count).select(features_column, labels_column)
+
+    return df_minority.select(features_column, labels_column).union(df_majority_undersampled)
   
 
   def oversample_random(self, df: DataFrame, labels_column: str):
@@ -292,6 +340,94 @@ class PreProcess:
 
       return df.withColumn("class_weights", get_class_weight_udf(col(labels_column)))
   
+  def churn(self, sdf, churn:str):
+      logger = logging.getLogger(__name__)
+      logging.basicConfig( encoding='utf-8', level=logging.INFO)
+      """
+      Identify the types of columns in a Spark DataFrame.
+
+      Args:
+      self: Reference to the class instance.
+      sdf (DataFrame): The input Spark DataFrame.
+      churn: The name of the churn column on the input Spark DataFrame.
+
+      Returns:
+      sdf: A Spark DataFrame with the churn column pre processed depending on its data type.
+      """
+      
+      # Identify columns by their data types
+      numeric_cols = [field.name for field in sdf.schema.fields if isinstance(field.dataType, (IntegerType, FloatType, DoubleType, LongType))]
+      categorical_cols = [field.name for field in sdf.schema.fields if isinstance(field.dataType, StringType)]
+      boolean_cols = [field.name for field in sdf.schema.fields if isinstance(field.dataType, BooleanType)]
+      array_cols = [field.name for field in sdf.schema.fields if isinstance(field.dataType, ArrayType)]
+      struct_cols = [field.name for field in sdf.schema.fields if isinstance(field.dataType, StructType)]
+      unknown_cols = [col for col in sdf.columns if col not in numeric_cols and col not in categorical_cols and col not in boolean_cols and col not in array_cols and col not in struct_cols]
+
+      # Create a dictionary to store column types
+      columns_types_dict = {
+          "numeric_cols": numeric_cols,
+          "categorical_cols": categorical_cols,
+          "boolean_cols": boolean_cols,
+          "array_cols": array_cols,
+          "struct_cols": struct_cols,
+          "unknown_cols": unknown_cols,
+      }
+      
+      churn1 = churn
+
+      found_churn1 = False
+
+      for key, value in columns_types_dict.items():
+        if isinstance(value, list):
+        # Iterate over list elements to check if column is present in list item
+          for item in value:
+            if isinstance(item, str) and item == churn1:
+                found_churn1 = True
+                # Column processing according to its data type
+                if key == "numeric_cols":
+                      indexer =StringIndexer(inputCol=churn1, outputCol="indexed_"+ churn1).fit(sdf)
+                      sdf = indexer.transform(sdf)
+                     # Store model StringIndexerModel in dict f or revert_string_index method
+                      self.indexer_models["indexed_"+ churn1] = indexer
+                     ## cambiar prints por login
+                      logger.info(f"Se encontró '{churn1}' en la lista de '{key}' , se aplicó string indexer")
+                elif key == "boolean_cols":  
+                    integer_column = when(col(churn1) == False, 0).otherwise(1)
+                    sdf = sdf.withColumn(churn1 + '_booleantointeger', integer_column) 
+                    logger.info(f"Se encontró '{churn1}' en la lista de '{key}' , se aplicó boolean to integer") 
+                elif key == "categorical_cols":
+                    stringIndexer = StringIndexer(inputCol= churn1, outputCol="indexed_"+ churn1)
+                    sdf = stringIndexer.fit(sdf).transform(sdf)
+                    sdf.show()
+                    logger.info(f"Se encontró '{churn1}' en la lista de '{key}', se aplicó string indexer")
+                break  
+          else:
+            continue  
+          break 
+      
+      if not found_churn1:
+       logger.info(f"'{churn1}' no es una columna del dataframe")
+   
+      return sdf
+
+  def churn_inverter(self, sdf, churn:str):
+      """
+      Inverts the churn values of  the churn column in a Spark DataFrame.
+
+      Args:
+      self: Reference to the class instance.
+      sdf (DataFrame): The input Spark DataFrame.
+      churn: The name of the churn column on the input Spark DataFrame.
+
+      Returns:
+      sdf: A Spark DataFrame with the churn column vlaues inverted.
+      """
+      churn1 = churn   
+      integer_column = when(col(churn1) == 0, 1).otherwise(0)
+      sdf = sdf.withColumn(churn1 + '_inverted', integer_column) 
+      sdf = sdf.drop(churn1)
+      return sdf
+  
   
   @classmethod
   def load_data(cls, file_path_df: str, spark):
@@ -309,7 +445,7 @@ class PreProcess:
     - ValueError: If the file format is not supported (i.e., not CSV, Parquet, or JSON).
     """
     if file_path_df.endswith('.csv'):
-        df = spark.read.option("header", True).csv(file_path_df)
+        df = spark.read.csv(file_path_df, header = True,inferSchema=True)
     elif file_path_df.endswith('.parquet'):
         df = spark.read.parquet(file_path_df)
     elif file_path_df.endswith('.json'):
