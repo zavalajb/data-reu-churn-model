@@ -54,6 +54,96 @@ class PreProcess:
       return columns_types_dict
   
 
+  def get_null_counts(self, df: DataFrame, with_percentages=False):
+    """
+    Counts the number of nulls of each column of a spark Dataframe and returns the counts in a separate Dataframe.
+    If with_percentages is set to True, also returns a Dataframe with the percentage of nulls in each column.
+
+    :param df: Spark DataFrame to process.
+    :param with_percentages: If set to True, the null percentages per column will also be calculated and returned
+    in an additional Dataframe
+
+    :return: Spark Dataframe with calculated null counts per column, or tuple of Spark Dataframes, where one Dataframe
+    will hold the column null counts and the other will hold the column null percentages.
+    """
+    null_counts = df.select([
+        F.sum(
+            F.when(F.col(column).isNull(), 1)\
+            .otherwise(0)
+        ).alias(column + "_nulls")
+        for column in df.columns
+    ])
+
+    if with_percentages:
+        total_count = df.count()
+        null_percentages = null_counts.select([
+            (F.col(column) / total_count).alias(column + "%")
+            for column in null_counts.columns
+        ])
+
+        return null_counts, null_percentages
+    
+    else:
+        return null_counts
+    
+
+  def clean_nulls(self, df: DataFrame, row_threshold: float, column_threshold: float, default_values: dict, unaccounted_nulls_behavior='drop_rows'):
+    """
+    Clean up null values in a Spark Dataframe according to a specified criteria.
+    This method can eliminate nulls by dropping columns, rows, or filling them up with a specific value.
+
+    :param df: Spark DataFrame to process.
+    :param row_threshold: Float value indicating the maximum proportion of null values that will be tolerated in a row. All rows with
+    a higher proportion of nulls will be dropped.
+    :param column_threshold: Float value indicating the maximum proportion of null values that will be tolerated in a coumn. All columns
+    with a higher proportion of nulls will be dropped.
+    :param default_values: Dictionary that specifies a mapping from column name (key) and desired fill value. The fill value can also be
+    a Spark aggregate function in order to fill null values with the corresponding calculation. Currently, the supported aggregate
+    functions are ('sum','count','avg','min', and 'max'). After dropping all rows and columns according to threshold rules, 
+    the remaining null values will be filled according to this mapping.
+    :param unnacounted_nulls_behavior: String, can be 'drop_rows' or 'drop_cols'. Specifies what action to take if null values are still
+    present in the Dataframe after all the previous rules have been applied. If 'drop_rows', all remaining rows with null values will
+    be dropped. If 'drop_cols', all remaining columns with null values will be dropped.
+
+    :return: Spark Dataframe with cleaned up null values.
+    """
+    SUPPORTED_AGGREGATE_FUNCTIONS = ('sum','count','avg','min','max')
+    
+    assert unaccounted_nulls_behavior in ('drop_rows', 'drop_cols'), "Parameter unnacounted_nulls behavior must be in ('drop_rows', 'drop_cols')"
+
+    total_count = df.count()
+
+    drop_cols = [
+        column for column in df.columns if (df.filter(F.col(column).isNull()).count() / total_count > column_threshold)
+    ]
+    df = df.drop(*drop_cols)
+
+    row_threshold_absolute = int(len(df.columns) * (1 - row_threshold))
+    df = df.dropna(thresh=row_threshold_absolute)
+
+    null_cols_updated = [
+        column for column in df.columns if (df.filter(F.col(column).isNull()).count() > 0)
+    ]
+    default_values_updated = {column: default_values[column] for column in null_cols_updated if column in default_values.keys()}
+    for column, fill_value in default_values_updated.items():
+        if fill_value in SUPPORTED_AGGREGATE_FUNCTIONS:
+            fill_value_agg = df.select(column).agg({column: fill_value}).first()[0]
+            df = df.fillna({column: fill_value_agg})
+        else:
+            df = df.fillna({column: fill_value})
+
+    null_cols_unnacounted = [
+        column for column in df.columns if (df.filter(F.col(column).isNull()).count() > 0)
+    ]
+    if null_cols_unnacounted:
+        if unaccounted_nulls_behavior == 'drop_rows':
+            df = df.dropna(how='any')
+        else:
+            df = df.drop(*null_cols_unnacounted)
+    
+    return df
+  
+
   def undersample_random(self, df: DataFrame, labels_column: str) -> DataFrame:
     """
     Performs random under-sampling of the majority class on imbalanced datasets. 
