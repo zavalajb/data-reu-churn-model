@@ -83,7 +83,7 @@ class PostProcess:
          Create a data frame with the features to train the model and its respectives importances in training process
 
          features_dict: dictionary where keys ar the names of features of the trained model in the order passed to training, 
-         bestModel: a trained instance of the model, 
+         bestModel: a trained instance of the model Random Forest or GBTClassifier, 
          saprkSession : a session spark where model was trained or loaded
          return: data frame with the features to train the model and its respectives importances in training process
          """
