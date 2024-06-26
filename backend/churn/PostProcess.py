@@ -1,7 +1,8 @@
 from pyspark.sql.functions import udf, col
 from pyspark.sql.types import StringType, ArrayType
 import boto3
-
+from pyspark.sql.functions import desc,asc
+from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType
 class PostProcess:
     def __init__(self, top_n):
         self.top_n = top_n  # Este atributo almacenará el número de recomendaciones top a retornar
@@ -77,3 +78,32 @@ class PostProcess:
                 region_name=region_name)
 
         s3_client.upload_file(file_path_model, bucket_name, "als_model")
+    def get_feature_importances(features_dict : dict, bestModel : object, spark_session : object):
+        """
+         Create a data frame with the features to train the model and its respectives importances in training process
+
+         features_dict: dictionary where keys ar the names of features of the trained model in the order passed to training, 
+         bestModel: a trained instance of the model, 
+         saprkSession : a session spark where model was trained or loaded
+         return: data frame with the features to train the model and its respectives importances in training process
+         """
+        feature_importances = bestModel.featureImportances.toArray().tolist()
+        feature_importances_values = {}
+        k=0
+        for key in features_dict.keys():
+            feature_importances_values[key] =  [feature_importances[i+k] for i in range(0,int(features_dict[key]))]
+            k = k+int(features_dict[key])
+        feature_importances_values_summarized = [sum(feature_importances_values[key]) for key in feature_importances_values.keys()]
+        # Create a list of (name, importance) tuples
+        feature_data = list(zip(features_dict.keys(), feature_importances_values_summarized))
+
+        # Define the schema
+        schema = StructType([
+        StructField("feature", StringType(), True),
+        StructField("importance", FloatType(), True)
+        ])
+
+        #Create a DataFrame from the list of tuples with the specified schema
+        feature_importances_df = spark_session.createDataFrame(feature_data, schema)
+        feature_importances_df = feature_importances_df.orderBy(desc("importance"))
+        return feature_importances_df
