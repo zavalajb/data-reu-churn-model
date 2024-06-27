@@ -306,14 +306,28 @@ class PreProcess:
          :return: DataFrame with the additional vector column.
         """
 
-# Create a VectorAssembler object
+   # Create a VectorAssembler object
         vector_assembler = VectorAssembler(inputCols=feature_cols, outputCol="features", handleInvalid="skip")
 
         df = vector_assembler.transform(df)
             # Store model StringIndexerModel in dict f or revert_string_index method
         #self.encoded_models[new_col_name] = encoder
         return df
-  
+  def boolean_index_columns(self, df: DataFrame, columns_to_boolean_index: list[tuple[str]]) -> DataFrame:
+        
+        """
+         Convert the specified boolean columns of a DataFrame into integers.
+
+         param df: Spark DataFrame to process.
+         param columns_to_boolean_index: List of tuples with the names of the boolean columns to be converted and the names of the new integer  columns.
+         return: DataFrame with the additional columns indexed.
+        """
+
+        for col_name, new_col_name in columns_to_boolean_index:
+            if isinstance(df.schema[col_name].dataType,BooleanType):
+                df = df.withColumn(new_col_name,when(col(col_name)==True,1).otherwise(0))
+            else:
+                raise ValueError(f'The dataType of the column {col_name} is not booleanType(), is {str(df.schema[col_name].dataType)}')
   def revert_string_index(self, df: DataFrame, columns_to_revert: list) -> DataFrame:
         
         """
