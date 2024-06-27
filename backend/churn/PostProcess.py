@@ -3,6 +3,7 @@ from pyspark.sql.types import StringType, ArrayType
 import boto3
 from pyspark.sql.functions import desc,asc
 from pyspark.sql.types import StructType, StructField, StringType, IntegerType, FloatType
+from pyspark.sql import SparkSession
 class PostProcess:
     def __init__(self, top_n):
         self.top_n = top_n  # Este atributo almacenará el número de recomendaciones top a retornar
@@ -78,7 +79,7 @@ class PostProcess:
                 region_name=region_name)
 
         s3_client.upload_file(file_path_model, bucket_name, "als_model")
-    def get_feature_importances(features_dict : dict, bestModel : object, spark_session : object):
+    def get_feature_importances(features_dict : dict, bestModel : object, spark_session : SparkSession):
         """
          Create a data frame with the features to train the model and its respectives importances in training process
 

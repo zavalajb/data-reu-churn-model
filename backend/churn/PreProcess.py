@@ -9,7 +9,7 @@ from pyspark.sql.types import IntegerType, FloatType, DoubleType, StringType, Bo
 # PySpark ML libraries
 
 
-from pyspark.ml.feature import StringIndexer, IndexToString, OneHotEncoder, VectorAssembler, BucketedRandomProjectionLSH
+from pyspark.ml.feature import StringIndexer, IndexToString, OneHotEncoder, VectorAssembler, BucketedRandomProjectionLSH, VectorIndexer
 
 class PreProcess:
 
