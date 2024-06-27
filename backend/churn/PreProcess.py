@@ -296,22 +296,21 @@ class PreProcess:
             # Store model StringIndexerModel in dict f or revert_string_index method
             self.encoded_models[new_col_name] = encoder
         return df
-  def vector_feature_column(self, df: DataFrame, feature_cols: list[str]) -> DataFrame:
+  def vector_feature_column(self, df: DataFrame, feature_cols: list[str], outputFeatureCols: str) -> DataFrame:
         
         """
          Vectorize the specified columns of a DataFrame.
 
-         :param df: Spark DataFrame to process.
-         :param columns_to_create_feature_vector: List of names of the columns to be added to features vector.
-         :return: DataFrame with the additional vector column.
+         param df: Spark DataFrame to process.
+         param columns_to_create_feature_vector: List of names of the columns to be added to features vector.
+         param outputFeatureCols: name of the new column.
+         return: DataFrame with the additional vector column.
         """
 
-   # Create a VectorAssembler object
-        vector_assembler = VectorAssembler(inputCols=feature_cols, outputCol="features", handleInvalid="skip")
+        # Create a VectorAssembler object
+        vector_assembler = VectorAssembler(inputCols=feature_cols, outputCol=outputFeatureCols, handleInvalid="skip")
 
         df = vector_assembler.transform(df)
-            # Store model StringIndexerModel in dict f or revert_string_index method
-        #self.encoded_models[new_col_name] = encoder
         return df
   def boolean_index_columns(self, df: DataFrame, columns_to_boolean_index: list[tuple[str]]) -> DataFrame:
         
