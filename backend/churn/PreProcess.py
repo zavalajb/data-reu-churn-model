@@ -569,6 +569,7 @@ class PreProcess:
               index 0: Spark DataFrame with additional indexed, encoded and vectorized cols, and class_weights column that holds the class weights associated with each row
               index 1: name of vector column of indexed features (can be used to train the model)
               index 2: name of vector column of encoded features (can be used to train the model)
+              index 2: new name for churn column after processing
                
     """
     #Identifying numeric, categorical and boolean columns that exists in both, df and feature cols
@@ -601,10 +602,13 @@ class PreProcess:
        
     
     #Indexing the label column according to its type
+    new_label_col = label_col
     if isinstance(df.schema[label_col].dataType,StringType):
       df= self.string_index_columns(df, [(label_col,"Churn_Index")])
+      new_label_col = "Churn_Index"
     elif isinstance(df.schema[label_col].dataType,BooleanType):
       df = self.boolean_index_columns(df,[(label_col,"Churn_Index")])
+      new_label_col = "Churn_Index"
     elif label_col in  self.columns_types(df)["numeric_cols"]:
        pass
     else:
@@ -634,4 +638,4 @@ class PreProcess:
     # Set maxCategories so features with > 6 distinct values are treated as continuous.
     vi = VectorIndexer(inputCol="IndexedEncodedFeatures", outputCol="VectorIndexedEncodedFeatures", maxCategories=maxCategories).fit(df)
     df = vi.transform(df)
-    return [df,"VectorIndexedFeatures","VectorIndexedEncodedFeatures"] 
+    return [df,"VectorIndexedFeatures","VectorIndexedEncodedFeatures","Churn_Index"] 
