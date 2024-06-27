@@ -37,7 +37,10 @@ class ClassificationModel:
 
     # Initialize the classification Model
     if model == "RandomForestClassifier":
-      ClassificationModelInstance = RandomForestClassifier(labelCol=labelCol, featuresCol=featuresCol,weightCol= weightCol,seed = 42)
+      if weightCol:
+        ClassificationModelInstance = RandomForestClassifier(labelCol=labelCol, featuresCol=featuresCol,weightCol= weightCol,seed = 42)
+      else:
+        ClassificationModelInstance = RandomForestClassifier(labelCol=labelCol, featuresCol=featuresCol,seed = 42)
 
 
       # Set considered parameter grid
@@ -51,7 +54,10 @@ class ClassificationModel:
       
     elif model == "GBTClassifier": 
       # Initialize the classification Model
-      ClassificationModelInstance = GBTClassifier(labelCol=labelCol, featuresCol=featuresCol, seed = 42)
+      if weightCol:
+        ClassificationModelInstance = GBTClassifier(labelCol=labelCol, featuresCol=featuresCol, seed = 42)
+      else:
+        ClassificationModelInstance = GBTClassifier(labelCol=labelCol, featuresCol=featuresCol, weightCol=weightCol, seed = 42)
       # Set considered parameter grid
       # Create a ParamGridBuilder
       paramGrid = (ParamGridBuilder()
@@ -84,11 +90,11 @@ class ClassificationModel:
     return  cvModel.bestModel
 
 
-  def performance_evaluation(self, labelCol,featuresCol, predictions):
+  def performance_evaluation(self, labelCol, predictionCol, predictions):
 
 
     evaluator = MulticlassClassificationEvaluator(
-    labelCol=labelCol, predictionCol=featuresCol, metricName="weightedRecall"
+    labelCol=labelCol, predictionCol=predictionCol, metricName="weightedRecall"
     )
 
     accuracy = evaluator.evaluate(predictions)
