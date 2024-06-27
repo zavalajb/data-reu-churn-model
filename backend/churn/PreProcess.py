@@ -99,7 +99,7 @@ class PreProcess:
     with a higher proportion of nulls will be dropped.
     :param default_values: Dictionary that specifies a mapping from column name (key) and desired fill value. The fill value can also be
     a Spark aggregate function in order to fill null values with the corresponding calculation. Currently, the supported aggregate
-    functions are ('sum','count','avg','min', and 'max'). After dropping all rows and columns according to threshold rules, 
+    functions are ('sum','count','avg','min', 'max', and 'median'). After dropping all rows and columns according to threshold rules, 
     the remaining null values will be filled according to this mapping.
     :param unnacounted_nulls_behavior: String, can be 'drop_rows' or 'drop_cols'. Specifies what action to take if null values are still
     present in the Dataframe after all the previous rules have been applied. If 'drop_rows', all remaining rows with null values will
@@ -107,7 +107,7 @@ class PreProcess:
 
     :return: Spark Dataframe with cleaned up null values.
     """
-    SUPPORTED_AGGREGATE_FUNCTIONS = ('sum','count','avg','min','max')
+    SUPPORTED_AGGREGATE_FUNCTIONS = ('sum','count','avg','min','max','median')
     
     assert unaccounted_nulls_behavior in ('drop_rows', 'drop_cols'), "Parameter unnacounted_nulls behavior must be in ('drop_rows', 'drop_cols')"
 
