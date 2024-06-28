@@ -24,6 +24,143 @@ class PreProcess:
     self.indexer_models = {}
     self.encoded_models = {}
 
+
+  def show_dataframe_summary(self, df, labels_col = None):
+    preprocess_instance = PreProcess(df)
+    categorical_cols = preprocess_instance.columns_types_atribute['categorical_cols']
+    numerical_cols = preprocess_instance.columns_types_atribute['numeric_cols']
+
+    # Show dtypes of each column
+    print("Dataframe schema: \n")
+    df.printSchema()
+    print("\n")
+
+    # General overview
+    print("Showing top 5 rows: \n")
+    df.show(5)
+    print("\n")
+
+    # Value counts of categoricals
+    if categorical_cols:
+        print("Showing value counts of each categorical feature: \n")
+        for c in categorical_cols:
+            df.groupBy(c).count().show()
+        print("\n")
+
+    # Overall data distribution of numerical columns
+    if numerical_cols:
+        print("Showing overall statistics of each numerical feature: \n")
+        df.select(numerical_cols).summary().show()
+        print("\n")
+
+    # If labels_col is specified, show dataframe class distribution
+    if labels_col:
+        print("Showing dataset class distribution: \n")
+        df.groupBy(labels_col).count().show()
+        print("\n")
+
+    # Null counts and percentages per column
+    print("Showing null counts and percentages per column: \n")
+    null_counts, null_percentages = preprocess_instance.get_null_counts(df, with_percentages=True)
+    null_counts.show()
+    null_percentages.show()
+    print("\n")
+
+
+  def stratified_train_test_split(self, df, labels_col, train_ratio, seed):
+    train_dfs = []
+    test_dfs = []
+    for label in df.select(labels_col).distinct().collect():
+        df_label = df.filter(df[labels_col] == label[0])
+
+        df_train, df_test = df_label.randomSplit([train_ratio, 1 - train_ratio], seed=seed)
+
+        train_dfs.append(df_train)
+        test_dfs.append(df_test)
+    
+    train_df_union = train_dfs[0]
+    test_df_union = test_dfs[0]
+    for i in range(1, len(train_dfs)):
+        train_df_union = train_df_union.union(train_dfs[i])
+        test_df_union = test_df_union.union(test_dfs[i])
+
+    return train_df_union, test_df_union
+
+
+  def preprocess_data(self, df, labels_col, clean_nulls_options, transformation_categorical, transformation_numerical, stratified_split, train_split_ratio, resampling, resampling_options=None, seed=None):
+    preprocess_instance = PreProcess(df)
+    categorical_cols = preprocess_instance.columns_types_atribute['categorical_cols']
+    numerical_cols = preprocess_instance.columns_types_atribute['numeric_cols']
+
+    # Step 1: Clean null values
+    df = preprocess_instance.clean_nulls(df, **clean_nulls_options)
+
+    # Step 2: Clean duplicate rows
+    df = df.dropDuplicates()
+
+    # Step 3: Process labels column
+    if labels_col in categorical_cols:
+        categorical_cols.remove(labels_col)
+        labels_column_mapping = [(labels_col, labels_col + "_index")]
+
+        df = preprocess_instance.string_index_columns(df, labels_column_mapping)
+        
+        df = df.drop(labels_col)
+    elif labels_col in numerical_cols:
+        numerical_cols.remove(labels_col)
+
+    # Step 4: Process categorical columns
+    if categorical_cols:
+        match transformation_categorical:
+            case 'index':
+                index_column_mapping = [(col, col + "_index") for col in categorical_cols]
+                df = preprocess_instance.string_index_columns(df, index_column_mapping)
+
+                df = df.drop(*categorical_cols)
+
+            case 'encode':
+                index_column_mapping = [(col, col + "_index") for col in categorical_cols]
+                df = preprocess_instance.string_index_columns(df, index_column_mapping)
+
+                encode_column_mapping = [(col + "_index", col + "_encoded") for col in categorical_cols]
+                df = preprocess_instance.encoded_index_columns(df, encode_column_mapping)
+
+                df = df.drop(*[col + "_index" for col in categorical_cols])
+                df = df.drop(*categorical_cols)
+
+    # Step 5: Process numerical columns
+    if numerical_cols:
+        match transformation_numerical:
+            case 'normalize':
+                df = preprocess_instance.normalize_min_max_values(numerical_cols, df)
+                df = df.drop(*numerical_cols)
+
+    # Step 6: Vectorize features
+    feature_cols = df.columns
+    feature_cols.remove(labels_col)
+    df = preprocess_instance.vector_feature_column(df, feature_cols, outputFeatureCols='features')
+    df = df.select(['features', labels_col])
+
+    # Step 6: Perform train/test split
+    if stratified_split:
+        train_df, test_df = self.stratified_train_test_split(df, labels_col, train_split_ratio, seed)
+    else:
+        train_df, test_df = df.randomSplit([train_split_ratio, 1-train_split_ratio], seed=seed)
+
+    # Step 5: Perform resampling techniques
+    match resampling:
+        case 'undersample_random':
+            train_df = preprocess_instance.undersample_random(train_df, labels_col)
+        case 'oversample_random':
+            train_df = preprocess_instance.oversample_random(train_df, labels_col)
+        case 'nearmiss_v2':
+            train_df = preprocess_instance.undersample_nearmiss_v2(train_df, 'features', labels_col, **resampling_options)
+        case 'class_weights':
+            train_df = preprocess_instance.compute_class_weights_column(df, labels_col)
+
+    return train_df, test_df
+
+
   def columns_types(self, sdf):
       """
       Identify the types of columns in a Spark DataFrame.
