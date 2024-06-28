@@ -7,6 +7,8 @@ from pyspark.sql import functions as F
 from pyspark.sql.functions import col, udf, when
 from pyspark.sql.types import IntegerType, FloatType, DoubleType, StringType, BooleanType, ArrayType, LongType, StructType, StructField
 from pyspark.sql.functions import countDistinct
+from pyspark.sql.functions import count, when, col, isnan, lit
+from pyspark.sql import SparkSession
 # PySpark ML libraries
 
 
@@ -54,7 +56,62 @@ class PreProcess:
       
       return columns_types_dict
   
+  def get_missing_values_count(self, df : DataFrame, spark_session : SparkSession):
+    """
+      Count the number of None, "NULL", "", Null and NaN values in each column of the dataframe
 
+       param df: Spark DataFrame to process.
+       param spark_session is the spark sesiion used to process the dataframe.
+       return: Spark DataFrame with four columns, Column, Type Count and Percentage, where Count is greater than 0.
+          
+    """
+      # Define the types we want to check
+    types_to_check = [
+        ("None", lambda c: col(c).contains('None')),
+        ("NULL_string", lambda c: col(c).contains('NULL')),
+        ("Empty_string", lambda c: col(c) == ''),
+        ("Null", lambda c: col(c).isNull()),
+        ("NaN", lambda c: isnan(col(c)))
+    ]
+
+    # Create a list to save our count expressions
+    count_expressions = []
+
+    # For each column and each type, create a count expression
+    for c in df.columns:
+        for type_name, condition in types_to_check:
+            count_expressions.append(
+                count(when(condition(c), c)).alias(f"{c}_{type_name}")
+            )
+
+    # Create the result DataFrame
+    result_df = df.select(count_expressions)
+
+    # Create a schema for our final DataFrame
+    schema = StructType([
+        StructField("Column", StringType(), False),
+        StructField("Type", StringType(), False),
+        StructField("Count", LongType(), False),
+        StructField("Percentage", FloatType(), False)
+    ])
+
+    # Create a list to hold our rows
+    rows = []
+
+    # For each column and type, extract the count and create a row
+    for c in df.columns:
+        for type_name, _ in types_to_check:
+            count_value = result_df.select(f"{c}_{type_name}").collect()[0][0]
+            rows.append((c, type_name, count_value,(count_value*100)/df.select(count(c)).collect()[0][0]))
+
+    # Create the final DataFrame
+    missing_values_count = spark_session.createDataFrame(rows, schema)
+
+    # Show the result
+    missing_values_count = missing_values_count.filter(missing_values_count.Count > 0).show()
+    return missing_values_count
+  
+  
   def get_null_counts(self, df: DataFrame, with_percentages=False):
     """
     Counts the number of nulls of each column of a spark Dataframe and returns the counts in a separate Dataframe.
