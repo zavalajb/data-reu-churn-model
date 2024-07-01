@@ -14,6 +14,12 @@ from pyspark.sql import SparkSession
 
 from pyspark.ml.feature import StringIndexer, IndexToString, OneHotEncoder, VectorAssembler, BucketedRandomProjectionLSH, VectorIndexer
 
+# Importing the Correlation module 
+from pyspark.ml.stat import Correlation
+import pandas as pd
+import numpy as np
+import seaborn as sns
+import matplotlib.pyplot as plt
 class PreProcess:
 
   def __init__(self, df_param):
@@ -852,4 +858,37 @@ class PreProcess:
     vi = VectorIndexer(inputCol="IndexedEncodedFeatures", outputCol="VectorIndexedEncodedFeatures", maxCategories=maxCategories).fit(df)
     df = vi.transform(df)
     return [df,"VectorIndexedFeatures","VectorIndexedEncodedFeatures",new_label_col,weigth_class_column] 
+
+def show_correlation_matrix(self,df : DataFrame, label_col: str,correlation_method : str):
+    """
+      Preprocess data to use it in RandomForestCassifier or GBTclassifier
+
+       param df: Spark DataFrame to process
+       param label_col: name of the DataFrame column that holds the label values
+       param correlation_method: name of the correlation to be calculated, "spearman" or "pearson"
+       return: show a plot of the correlation matrix in a coolwarm palette
+    """
+    columns = df.columns
+    data_to_plot = self.get_indexed_and_encode_vectors(df,columns , label_col)
+    df= data_to_plot[0]
+    VectorIndexedFeatures = data_to_plot[1]
+    # Calculate correlation matrix
+    if correlation_method in ["spearman","pearson"]:
+        pearson_corr_matrix = Correlation.corr(df, VectorIndexedFeatures, method= correlation_method).head()
+    else:
+        raise ValueError("Not supported method for correlation.")
+    correlation_matrix = pearson_corr_matrix[0].toArray()
+    # Convert to Pandas DataFrame
+    df2 = pd.DataFrame(correlation_matrix,index = columns, columns= columns)
+    # Set up the matplotlib figure
+    plt.figure(figsize=(20, 20))
+
+    # Create the heatmap
+    sns.heatmap(df2, annot=True, cmap='coolwarm', vmin=-1, vmax=1, center=0)
+
+    # Set the title
+    plt.title('Correlation Matrix Heatmap')
+
+    # Show the plot
+    plt.show()
 
