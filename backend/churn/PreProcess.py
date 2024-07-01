@@ -752,7 +752,7 @@ class PreProcess:
         raise ValueError("Unsupported file format. Only CSV, Parquet, and JSON files are supported.")
     return df
   
-  def process_data_to_model(self,df,feature_cols : list, label_col:str):
+  def get_indexed_and_encode_vectors(self,df,feature_cols : list, label_col:str):
     """
       Preprocess data to use it in RandomForestCassifier or GBTclassifier
 
@@ -763,32 +763,47 @@ class PreProcess:
               index 0: Spark DataFrame with additional indexed, encoded and vectorized cols, and class_weights column that holds the class weights associated with each row
               index 1: name of vector column of indexed features (can be used to train the model)
               index 2: name of vector column of encoded features (can be used to train the model)
-              index 2: new name for churn column after processing
+              index 3: new name for churn column after processing
+              index 4 : name for column with the weight of classes
                
     """
     #Identifying numeric, categorical and boolean columns that exists in both, df and feature cols
     numeric_cols = [c for c in self.columns_types(df)["numeric_cols"] if c in feature_cols]
     categorical_cols = [c for c in  self.columns_types(df)["categorical_cols"] if c in feature_cols]
     boolean_cols =[c for c in self.columns_types(df)["boolean_cols"] if c in feature_cols]
+    #Defining default values 
+    categorical_cols_indexed =  []
+    columns_to_string_index=[]
+    boolean_cols_indexed =  []
+    columns_to_boolean_index = []
+    categorical_cols_encoded = []
+    boolean_cols_encoded = []
+    columns_indexed = []
+    columns_encoded = []
+    columns_to_encode = []
+    maxCategories = 5
+    weigth_class_column = "class_weights"
+    new_label_col = label_col
+    if len(categorical_cols) > 0:
+        #Creating the list of tuples with categorical cols to be indexed and encoded
+        categorical_cols_indexed =  [f"{c}Index" for c in categorical_cols]
+        columns_to_string_index=list(zip(categorical_cols,categorical_cols_indexed))
+        categorical_cols_encoded = [f"{c}Encoded" for c in categorical_cols_indexed]
+        # Set maxCategories as the maximum number of categories in every categorical and boolean feature
+        distinct_counts = df.agg(*[countDistinct(c).alias(c) for c in categorical_cols+boolean_cols])
+        maxCategories = max([distinct_counts.select(c).collect()[0][c] for c in distinct_counts.columns])
+    if len(boolean_cols) > 0:
+        #Creating the list of tuples with boolean cols to be indexed and encoded
+        boolean_cols_indexed =  [f"{c}Index" for c in boolean_cols]
+        columns_to_boolean_index = list(zip(boolean_cols,boolean_cols_indexed))
+        boolean_cols_encoded = [f"{c}Encoded" for c in boolean_cols_indexed]
+    if len(boolean_cols) > 0 or len(categorical_cols):   
+        #creating the list of tuples with boolean and categorical cols to be encoded     
+        columns_indexed = categorical_cols_indexed + boolean_cols_indexed
+        columns_encoded = categorical_cols_encoded + boolean_cols_encoded
+        columns_to_encode = list(zip(columns_indexed,columns_encoded))
 
-    #Creating the list of tuples with categorical cols to be indexed 
-    categorical_cols_indexed =  [f"{c}Index" for c in categorical_cols]
-    columns_to_string_index=list(zip(categorical_cols,categorical_cols_indexed))
-    
-    #Creating the list of tuples with boolean cols to be indexed 
-    boolean_cols_indexed =  [f"{c}Index" for c in boolean_cols]
-    columns_to_boolean_index = list(zip(boolean_cols,boolean_cols_indexed))
 
-    #Creating the list of tuples with boolean and categorical cols to be encoded
-    categorical_cols_encoded = [f"{c}Encoded" for c in categorical_cols_indexed]
-    boolean_cols_encoded = [f"{c}Encoded" for c in boolean_cols_indexed]
-    columns_indexed = categorical_cols_indexed + boolean_cols_indexed
-    columns_encoded = categorical_cols_encoded + boolean_cols_encoded
-    columns_to_encode = list(zip(columns_indexed,columns_encoded))
-
-    # Set maxCategories as the maximum number of categories in every categorical and boolean feature
-    distinct_counts = df.agg(*[countDistinct(c).alias(c) for c in categorical_cols+boolean_cols])
-    maxCategories = max([distinct_counts.select(c).collect()[0][c] for c in distinct_counts.columns])
 
     #Defining two new lists of features with the  features that just were indexed and the features that wre encoded after indexed, respectively
     indexed_features_col_to_train_model =  categorical_cols_indexed + boolean_cols_indexed + numeric_cols
@@ -796,7 +811,7 @@ class PreProcess:
        
     
     #Indexing the label column according to its type
-    new_label_col = label_col
+    
     if isinstance(df.schema[label_col].dataType,StringType):
       df= self.string_index_columns(df, [(label_col,"Churn_Index")])
       new_label_col = "Churn_Index"
@@ -807,14 +822,18 @@ class PreProcess:
        pass
     else:
        raise ValueError(f"Your label column {label_col} is not a supported type for this method and maybe requires another kind of treatment.")
-
-    #Indexing categorical and boolean columns from features 
-    df= self.string_index_columns(df, columns_to_string_index)
-    df = self.boolean_index_columns(df,columns_to_boolean_index)
-    #Encoding indexed categorical and boolean columns from features
-    df = self.encoded_index_columns(df, columns_to_encode)
+    
+    if len(categorical_cols) > 0:
+        #Indexing categorical columns from features 
+        df= self.string_index_columns(df, columns_to_string_index)
+    if len(boolean_cols):
+        #Indexing boolean columns from features 
+        df = self.boolean_index_columns(df,columns_to_boolean_index)
+    if len(boolean_cols) > 0 or len(categorical_cols):   
+        #Encoding indexed categorical and boolean columns from features
+        df = self.encoded_index_columns(df, columns_to_encode)
     #Adding column with the weight classes to help with imbalanced classes
-    df = self.compute_class_weights_column( df, "Churn_Index")
+    df = self.compute_class_weights_column( df, new_label_col)
 
     #merging columns in indexed_features_col_to_train_model into a vector column
     df = self.vector_feature_column(df, indexed_features_col_to_train_model,"IndexedFeatures") 
@@ -832,4 +851,5 @@ class PreProcess:
     # Set maxCategories so features with > 6 distinct values are treated as continuous.
     vi = VectorIndexer(inputCol="IndexedEncodedFeatures", outputCol="VectorIndexedEncodedFeatures", maxCategories=maxCategories).fit(df)
     df = vi.transform(df)
-    return [df,"VectorIndexedFeatures","VectorIndexedEncodedFeatures","Churn_Index"] 
+    return [df,"VectorIndexedFeatures","VectorIndexedEncodedFeatures",new_label_col,weigth_class_column] 
+
