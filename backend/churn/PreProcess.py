@@ -31,45 +31,84 @@ class PreProcess:
     self.encoded_models = {}
 
 
-  def show_dataframe_summary(self, df, labels_col = None):
-    preprocess_instance = PreProcess(df)
-    categorical_cols = preprocess_instance.columns_types_atribute['categorical_cols']
-    numerical_cols = preprocess_instance.columns_types_atribute['numeric_cols']
+  def show_summary_general(self, df, n_rows=5):
+    """
+    Prints the schema and top n rows of a Spark DataFrame to the console. 
 
-    # Show dtypes of each column
+    :param df: Spark DataFrame to process
+    :param n_rows: Number of top rows to print, defaults to 5
+    """
     print("Dataframe schema: \n")
     df.printSchema()
     print("\n")
 
-    # General overview
-    print("Showing top 5 rows: \n")
-    df.show(5)
+    print(f"Showing top {n_rows} rows: \n")
+    df.show(n_rows)
     print("\n")
 
-    # Value counts of categoricals
+
+  def show_summary_categoricals(self, df):
+    """
+    Prints the value counts of each categorical column of a Spark DataFrame to the console.
+    If the DataFrame does not contain any categorical columns, no data is printed.
+
+    :param df: Spark Dataframe to process
+    """
+    preprocess_instance = PreProcess(df)
+    categorical_cols = preprocess_instance.columns_types_atribute['categorical_cols']
+
     if categorical_cols:
         print("Showing value counts of each categorical feature: \n")
         for c in categorical_cols:
             df.groupBy(c).count().show()
         print("\n")
+    else:
+        print("No categorical columns were found in the dataframe")
 
-    # Overall data distribution of numerical columns
+
+  def show_summary_numerical(self, df):
+    """
+    Computes and prints the count, mean, stddev, min, max, and quantiles of each numerical column of a Spark DataFrame to the console.
+    If the DataFrame does not contain any numerical columns, no data is printed.
+
+    :param df: Spark Dataframe to process
+    """
+    preprocess_instance = PreProcess(df)
+    numerical_cols = preprocess_instance.columns_types_atribute['numeric_cols']
+
     if numerical_cols:
         print("Showing overall statistics of each numerical feature: \n")
         df.select(numerical_cols).summary().show()
         print("\n")
+    else:
+        print("No numerical columns were found in the dataframe")
 
-    # If labels_col is specified, show dataframe class distribution
-    if labels_col:
-        print("Showing dataset class distribution: \n")
-        df.groupBy(labels_col).count().show()
-        print("\n")
+    
+  def show_summary_labels(self, df, labels_col):
+    """
+    Prints the counts of each class of a classification dataset stored as a Spark DataFrame.
+
+    :param df: Spark Dataframe to process
+    :param labels_col: Name of the DataFrame column that hold the classes
+    """
+    print("Showing dataset class distribution: \n")
+    df.groupBy(labels_col).count().show()
+    print("\n")
+
+
+  def show_summary_nulls(self, df, spark_session):
+    """
+    Computes the number of missing values (such as NULL, NaN, empty strings, etc.) in a Spark DataFrame and prints it to the console.
+
+    :param df: Spark Dataframe to process
+    :param spark_session: Spark session instance that will be used to process the dataframe.
+    """
+    preprocess_instance = PreProcess(df)
 
     # Null counts and percentages per column
-    print("Showing null counts and percentages per column: \n")
-    null_counts, null_percentages = preprocess_instance.get_null_counts(df, with_percentages=True)
+    print("Showing missing value counts and percentages per column: \n")
+    null_counts = preprocess_instance.get_missing_values_count(df, spark_session)
     null_counts.show()
-    null_percentages.show()
     print("\n")
 
 
