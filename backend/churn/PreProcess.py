@@ -733,6 +733,140 @@ class PreProcess:
       return sdf
   
   
+  def get_indexed_and_encode_vectors(self,df,feature_cols : list, label_col:str):
+     """
+      Preprocess data to use it in RandomForestCassifier or GBTclassifier
+
+       param df: Spark DataFrame to process
+       param feature_cols: list with the names of cols that will be used as features, 
+       param label_col: name of the DataFrame column that holds the label values
+       return: A list with the following output
+              index 0: Spark DataFrame with additional indexed, encoded and vectorized cols, and class_weights column that holds the class weights associated with each row
+              index 1: name of vector column of indexed features (can be used to train the model)
+              index 2: name of vector column of encoded features (can be used to train the model)
+              index 3: new name for churn column after processing
+              index 4 : name for column with the weight of classes
+               
+     """
+     #Identifying numeric, categorical and boolean columns that exists in both, df and feature cols
+     numeric_cols = [c for c in self.columns_types(df)["numeric_cols"] if c in feature_cols]
+     categorical_cols = [c for c in  self.columns_types(df)["categorical_cols"] if c in feature_cols]
+     boolean_cols =[c for c in self.columns_types(df)["boolean_cols"] if c in feature_cols]
+    #Defining default values 
+     categorical_cols_indexed =  []
+     columns_to_string_index=[]
+     boolean_cols_indexed =  []
+     columns_to_boolean_index = []
+     categorical_cols_encoded = []
+     boolean_cols_encoded = []
+     columns_indexed = []
+     columns_encoded = []
+     columns_to_encode = []
+     maxCategories = 5
+     weigth_class_column = "class_weights"
+     new_label_col = label_col
+     if len(categorical_cols) > 0:
+         #Creating the list of tuples with categorical cols to be indexed and encoded
+         categorical_cols_indexed =  [f"{c}Index" for c in categorical_cols]
+         columns_to_string_index=list(zip(categorical_cols,categorical_cols_indexed))
+         categorical_cols_encoded = [f"{c}Encoded" for c in categorical_cols_indexed]
+         # Set maxCategories as the maximum number of categories in every categorical and boolean feature
+         distinct_counts = df.agg(*[countDistinct(c).alias(c) for c in categorical_cols+boolean_cols])
+         maxCategories = max([distinct_counts.select(c).collect()[0][c] for c in distinct_counts.columns])
+     if len(boolean_cols) > 0:
+         #Creating the list of tuples with boolean cols to be indexed and encoded
+         boolean_cols_indexed =  [f"{c}Index" for c in boolean_cols]
+         columns_to_boolean_index = list(zip(boolean_cols,boolean_cols_indexed))
+         boolean_cols_encoded = [f"{c}Encoded" for c in boolean_cols_indexed]
+     if len(boolean_cols) > 0 or len(categorical_cols):   
+         #creating the list of tuples with boolean and categorical cols to be encoded     
+         columns_indexed = categorical_cols_indexed + boolean_cols_indexed
+         columns_encoded = categorical_cols_encoded + boolean_cols_encoded
+         columns_to_encode = list(zip(columns_indexed,columns_encoded))
+
+
+
+      #Defining two new lists of features with the  features that just were indexed and the features that wre encoded after indexed, respectively
+     indexed_features_col_to_train_model =  categorical_cols_indexed + boolean_cols_indexed + numeric_cols
+     encoded_features_col_to_train_model =  columns_encoded + numeric_cols
+       
+    
+      #Indexing the label column according to its type
+    
+     if isinstance(df.schema[label_col].dataType,StringType):
+        df= self.string_index_columns(df, [(label_col,"Churn_Index")])
+        new_label_col = "Churn_Index"
+     elif isinstance(df.schema[label_col].dataType,BooleanType):
+        df = self.boolean_index_columns(df,[(label_col,"Churn_Index")])
+        new_label_col = "Churn_Index"
+     elif label_col in  self.columns_types(df)["numeric_cols"]:
+        pass
+     else:
+        raise ValueError(f"Your label column {label_col} is not a supported type for this method and maybe requires another kind of treatment.")
+    
+     if len(categorical_cols) > 0:
+        #Indexing categorical columns from features 
+        df= self.string_index_columns(df, columns_to_string_index)
+     if len(boolean_cols):
+        #Indexing boolean columns from features 
+        df = self.boolean_index_columns(df,columns_to_boolean_index)
+     if len(boolean_cols) > 0 or len(categorical_cols):   
+        #Encoding indexed categorical and boolean columns from features
+        df = self.encoded_index_columns(df, columns_to_encode)
+     #Adding column with the weight classes to help with imbalanced classes
+     df = self.compute_class_weights_column( df, new_label_col)
+
+     #merging columns in indexed_features_col_to_train_model into a vector column
+     df = self.vector_feature_column(df, indexed_features_col_to_train_model,"IndexedFeatures") 
+
+     #merging columns in encoded_features_col_to_train_model into a vector column
+     df = self.vector_feature_column(df, encoded_features_col_to_train_model,"IndexedEncodedFeatures") 
+    
+    
+    
+     # Automatically identify categorical features from features that just were indexed, and index them.
+     # Set maxCategories so features with > maxCategories distinct values are treated as continuous.
+     vi = VectorIndexer(inputCol="IndexedFeatures", outputCol="VectorIndexedFeatures", maxCategories=maxCategories).fit(df)
+     df = vi.transform(df)
+    # Automatically identify categorical features from features that were encoded after indexation, and index them.
+    # Set maxCategories so features with > 6 distinct values are treated as continuous.
+     vi = VectorIndexer(inputCol="IndexedEncodedFeatures", outputCol="VectorIndexedEncodedFeatures", maxCategories=maxCategories).fit(df)
+     df = vi.transform(df)
+     return [df,"VectorIndexedFeatures","VectorIndexedEncodedFeatures",new_label_col,weigth_class_column] 
+
+  def show_correlation_matrix(self,df : DataFrame, label_col: str,correlation_method : str):
+        """
+        Preprocess data to use it in RandomForestCassifier or GBTclassifier
+
+        param df: Spark DataFrame to process
+        param label_col: name of the DataFrame column that holds the label values
+        param correlation_method: name of the correlation to be calculated, "spearman" or "pearson"
+        return: show a plot of the correlation matrix in a coolwarm palette
+        """
+        columns = df.columns
+        data_to_plot = self.get_indexed_and_encode_vectors(df,columns , label_col)
+        df= data_to_plot[0]
+        VectorIndexedFeatures = data_to_plot[1]
+        # Calculate correlation matrix
+        if correlation_method in ["spearman","pearson"]:
+            pearson_corr_matrix = Correlation.corr(df, VectorIndexedFeatures, method= correlation_method).head()
+        else:
+            raise ValueError("Not supported method for correlation.")
+        correlation_matrix = pearson_corr_matrix[0].toArray()
+        # Convert to Pandas DataFrame
+        df2 = pd.DataFrame(correlation_matrix,index = columns, columns= columns)
+        # Set up the matplotlib figure
+        plt.figure(figsize=(20, 20))
+
+        # Create the heatmap
+        sns.heatmap(df2, annot=True, cmap='coolwarm', vmin=-1, vmax=1, center=0)
+
+        # Set the title
+        plt.title('Correlation Matrix Heatmap')
+
+        # Show the plot
+        plt.show()
+
   @classmethod
   def load_data(cls, file_path_df: str, spark):
     """
@@ -756,139 +890,4 @@ class PreProcess:
         df = spark.read.json(file_path_df)
     else:
         raise ValueError("Unsupported file format. Only CSV, Parquet, and JSON files are supported.")
-    return df
-  
-  def get_indexed_and_encode_vectors(self,df,feature_cols : list, label_col:str):
-    """
-      Preprocess data to use it in RandomForestCassifier or GBTclassifier
-
-       param df: Spark DataFrame to process
-       param feature_cols: list with the names of cols that will be used as features, 
-       param label_col: name of the DataFrame column that holds the label values
-       return: A list with the following output
-              index 0: Spark DataFrame with additional indexed, encoded and vectorized cols, and class_weights column that holds the class weights associated with each row
-              index 1: name of vector column of indexed features (can be used to train the model)
-              index 2: name of vector column of encoded features (can be used to train the model)
-              index 3: new name for churn column after processing
-              index 4 : name for column with the weight of classes
-               
-    """
-    #Identifying numeric, categorical and boolean columns that exists in both, df and feature cols
-    numeric_cols = [c for c in self.columns_types(df)["numeric_cols"] if c in feature_cols]
-    categorical_cols = [c for c in  self.columns_types(df)["categorical_cols"] if c in feature_cols]
-    boolean_cols =[c for c in self.columns_types(df)["boolean_cols"] if c in feature_cols]
-    #Defining default values 
-    categorical_cols_indexed =  []
-    columns_to_string_index=[]
-    boolean_cols_indexed =  []
-    columns_to_boolean_index = []
-    categorical_cols_encoded = []
-    boolean_cols_encoded = []
-    columns_indexed = []
-    columns_encoded = []
-    columns_to_encode = []
-    maxCategories = 5
-    weigth_class_column = "class_weights"
-    new_label_col = label_col
-    if len(categorical_cols) > 0:
-        #Creating the list of tuples with categorical cols to be indexed and encoded
-        categorical_cols_indexed =  [f"{c}Index" for c in categorical_cols]
-        columns_to_string_index=list(zip(categorical_cols,categorical_cols_indexed))
-        categorical_cols_encoded = [f"{c}Encoded" for c in categorical_cols_indexed]
-        # Set maxCategories as the maximum number of categories in every categorical and boolean feature
-        distinct_counts = df.agg(*[countDistinct(c).alias(c) for c in categorical_cols+boolean_cols])
-        maxCategories = max([distinct_counts.select(c).collect()[0][c] for c in distinct_counts.columns])
-    if len(boolean_cols) > 0:
-        #Creating the list of tuples with boolean cols to be indexed and encoded
-        boolean_cols_indexed =  [f"{c}Index" for c in boolean_cols]
-        columns_to_boolean_index = list(zip(boolean_cols,boolean_cols_indexed))
-        boolean_cols_encoded = [f"{c}Encoded" for c in boolean_cols_indexed]
-    if len(boolean_cols) > 0 or len(categorical_cols):   
-        #creating the list of tuples with boolean and categorical cols to be encoded     
-        columns_indexed = categorical_cols_indexed + boolean_cols_indexed
-        columns_encoded = categorical_cols_encoded + boolean_cols_encoded
-        columns_to_encode = list(zip(columns_indexed,columns_encoded))
-
-
-
-    #Defining two new lists of features with the  features that just were indexed and the features that wre encoded after indexed, respectively
-    indexed_features_col_to_train_model =  categorical_cols_indexed + boolean_cols_indexed + numeric_cols
-    encoded_features_col_to_train_model =  columns_encoded + numeric_cols
-       
-    
-    #Indexing the label column according to its type
-    
-    if isinstance(df.schema[label_col].dataType,StringType):
-      df= self.string_index_columns(df, [(label_col,"Churn_Index")])
-      new_label_col = "Churn_Index"
-    elif isinstance(df.schema[label_col].dataType,BooleanType):
-      df = self.boolean_index_columns(df,[(label_col,"Churn_Index")])
-      new_label_col = "Churn_Index"
-    elif label_col in  self.columns_types(df)["numeric_cols"]:
-       pass
-    else:
-       raise ValueError(f"Your label column {label_col} is not a supported type for this method and maybe requires another kind of treatment.")
-    
-    if len(categorical_cols) > 0:
-        #Indexing categorical columns from features 
-        df= self.string_index_columns(df, columns_to_string_index)
-    if len(boolean_cols):
-        #Indexing boolean columns from features 
-        df = self.boolean_index_columns(df,columns_to_boolean_index)
-    if len(boolean_cols) > 0 or len(categorical_cols):   
-        #Encoding indexed categorical and boolean columns from features
-        df = self.encoded_index_columns(df, columns_to_encode)
-    #Adding column with the weight classes to help with imbalanced classes
-    df = self.compute_class_weights_column( df, new_label_col)
-
-    #merging columns in indexed_features_col_to_train_model into a vector column
-    df = self.vector_feature_column(df, indexed_features_col_to_train_model,"IndexedFeatures") 
-
-    #merging columns in encoded_features_col_to_train_model into a vector column
-    df = self.vector_feature_column(df, encoded_features_col_to_train_model,"IndexedEncodedFeatures") 
-    
-    
-    
-    # Automatically identify categorical features from features that just were indexed, and index them.
-    # Set maxCategories so features with > maxCategories distinct values are treated as continuous.
-    vi = VectorIndexer(inputCol="IndexedFeatures", outputCol="VectorIndexedFeatures", maxCategories=maxCategories).fit(df)
-    df = vi.transform(df)
-    # Automatically identify categorical features from features that were encoded after indexation, and index them.
-    # Set maxCategories so features with > 6 distinct values are treated as continuous.
-    vi = VectorIndexer(inputCol="IndexedEncodedFeatures", outputCol="VectorIndexedEncodedFeatures", maxCategories=maxCategories).fit(df)
-    df = vi.transform(df)
-    return [df,"VectorIndexedFeatures","VectorIndexedEncodedFeatures",new_label_col,weigth_class_column] 
-
-def show_correlation_matrix(self,df : DataFrame, label_col: str,correlation_method : str):
-    """
-      Preprocess data to use it in RandomForestCassifier or GBTclassifier
-
-       param df: Spark DataFrame to process
-       param label_col: name of the DataFrame column that holds the label values
-       param correlation_method: name of the correlation to be calculated, "spearman" or "pearson"
-       return: show a plot of the correlation matrix in a coolwarm palette
-    """
-    columns = df.columns
-    data_to_plot = self.get_indexed_and_encode_vectors(df,columns , label_col)
-    df= data_to_plot[0]
-    VectorIndexedFeatures = data_to_plot[1]
-    # Calculate correlation matrix
-    if correlation_method in ["spearman","pearson"]:
-        pearson_corr_matrix = Correlation.corr(df, VectorIndexedFeatures, method= correlation_method).head()
-    else:
-        raise ValueError("Not supported method for correlation.")
-    correlation_matrix = pearson_corr_matrix[0].toArray()
-    # Convert to Pandas DataFrame
-    df2 = pd.DataFrame(correlation_matrix,index = columns, columns= columns)
-    # Set up the matplotlib figure
-    plt.figure(figsize=(20, 20))
-
-    # Create the heatmap
-    sns.heatmap(df2, annot=True, cmap='coolwarm', vmin=-1, vmax=1, center=0)
-
-    # Set the title
-    plt.title('Correlation Matrix Heatmap')
-
-    # Show the plot
-    plt.show()
-
+    return df  
