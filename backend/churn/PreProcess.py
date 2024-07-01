@@ -112,7 +112,17 @@ class PreProcess:
     print("\n")
 
 
-  def stratified_train_test_split(self, df, labels_col, train_ratio, seed):
+  def stratified_train_test_split(self, df: DataFrame, labels_col: str, train_ratio: float, seed=None):
+    """
+    Splits a Spark DataFrame into a training and a test set according to the ratio defined by the user,
+    while also maintaining the class distribution on both of the resulting datasets.
+
+    :param df: Spark DataFrame to process.
+    :param labels_col: Name of the DataFrame column that holds the classes.
+    :param train_ratio: Desired ratio of training_samples : test_samples
+    :param seed: Random seed
+    :return: Tuple of (DataFrame, DataFrame), where the first element is the training dataset and the second element is the test dataset
+    """
     train_dfs = []
     test_dfs = []
     for label in df.select(labels_col).distinct().collect():
@@ -132,7 +142,25 @@ class PreProcess:
     return train_df_union, test_df_union
 
 
-  def preprocess_data(self, df, labels_col, clean_nulls_options, transformation_categorical, transformation_numerical, stratified_split, train_split_ratio, resampling, resampling_options=None, seed=None):
+  def preprocess_data(self, df: DataFrame, labels_col: str, clean_nulls_options: dict, transformation_categorical: str = None,
+                       transformation_numerical: str = None, stratified_split: bool = False, train_split_ratio: float = 0.8, 
+                       rebalancing_technique: str = None, resampling_options: dict = None, seed: int = None):
+    """
+    Applies general preprocessing techniques and transformations to a Spark DataFrame according to the steps specified by the user and returns a training and test
+    dataframe ready to be used on any Spark ML model.
+
+    :param df: Spark DataFrame to process.
+    :param labels_col: Name of the DataFrame column that holds the classes.
+    :param clean_nulls_options: Dictionary used to configure call to clean_nulls method. Each key:value pair must correspond to a valid parameter name and value of the PreProcess.clean_nulls method (i.e. {"row_threshold": 0.5}).
+    :param transformation_categorical: String specifying what transformation should be applied to categorical columns. Currently, this method supports any of ('indexing', 'encoding'). If not specified, no transformations will be applied. 
+    :param transformation_numerical: String specifying what transformation should be applied to numerical columns. Currently, this method only supports 'normalize'. If not specified, no transformations will be applied. 
+    :param stratified_split: Flag used to determine if a stratified train/test split should be applied. If True, split will be stratified in order to try to preserve class distribution among traning and test sets. If False, split will be fully random. Defaults to False
+    :param train_split_ratio: Desired ratio of training_samples : test_samples, defaults to 0.8
+    :param rebalancing_technique: String specifying what rebalancing technique should be applied to treat class imbalance on the dataset. Currently, this method supports any of ('undersample_random', 'oversample_random', 'nearmiss_v2', 'class_weights'). If not specified, no techniques will be applied.
+    :param resampling_options: Dictionary used to configure call to the desired resampling method, if used. Each key:value pair must correspond to a valid parameter name and value of the corresponding resampling method (i.e. {"k": 5} for method 'nearmiss_v2'). Only used if rebalancing_technique is specified.
+    :param seed: Random seed.
+    :return: Tuple of (DataFrame, DataFrame), where the first element is the training dataset and the second element is the test dataset. Both dataframe will contain a new 'features' column that will store their respective feature vectors, which can be fed into any Spark ML model.
+    """
     preprocess_instance = PreProcess(df)
     categorical_cols = preprocess_instance.columns_types_atribute['categorical_cols']
     numerical_cols = preprocess_instance.columns_types_atribute['numeric_cols']
@@ -193,7 +221,7 @@ class PreProcess:
         train_df, test_df = df.randomSplit([train_split_ratio, 1-train_split_ratio], seed=seed)
 
     # Step 5: Perform resampling techniques
-    match resampling:
+    match rebalancing_technique:
         case 'undersample_random':
             train_df = preprocess_instance.undersample_random(train_df, labels_col)
         case 'oversample_random':
